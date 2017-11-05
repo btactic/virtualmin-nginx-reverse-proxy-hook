@@ -1,0 +1,145 @@
+#!/bin/bash
+
+#######################################################################
+# Nginx Config Generator is a virtualmin hook to set Nginx config
+# when creating/editing/deleting a virtualserver.
+
+# Copyright (C) 2017 Marc Sanchez Fauste
+# Copyright (C) 2017 Adrian Gibanel
+# Copyright (C) 2017 BTACTIC, SCCL
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#######################################################################
+
+#set -x
+#set -v
+
+# Note: Virtualmin subservers with its own home are not currently supported
+# Note: Only aliases are supported
+
+NGINX_CONF_TEMPLATE_DIR="/usr/local/etc/nginx-templates"
+NGINX_CONF_TEMPLATE="default"
+NGINX_SSL_CONF_TEMPLATE_FILE="plantilla-nginx-ssl.conf"
+NGINX_NON_SSL_CONF_TEMPLATE_FILE="plantilla-nginx.conf"
+
+NGINX_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/${NGINX_SSL_CONF_TEMPLATE_FILE}"
+NGINX_NON_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/${NGINX_NON_SSL_CONF_TEMPLATE_FILE}"
+
+### NGINX CONF DEFAULT VARIABLES - BEGIN
+
+REPL_SSL_PROTOCOLS="TLSv1 TLSv1.1 TLSv1.2"
+REPL_SSL_CIPHERS="!SSLv2:!MD5:HIGH"
+
+### NGINX CONF DEFAULT VARIABLES - END
+
+### NGINX CONF THIS MACHINE VARIABLES - BEGIN
+
+REPL_PUBLIC_NON_SSL_IP="${VIRTUALSERVER_IP}"
+REPL_PUBLIC_NON_SSL_PORT="80"
+REPL_APACHE_NON_SSL_IP="${VIRTUALSERVER_IP}"
+REPL_APACHE_NON_SSL_PORT="${VIRTUALSERVER_WEB_PORT}"
+
+REPL_PUBLIC_SSL_IP="${VIRTUALSERVER_IP}"
+REPL_PUBLIC_SSL_PORT="443"
+REPL_APACHE_SSL_IP="${VIRTUALSERVER_IP}"
+REPL_APACHE_SSL_PORT="${VIRTUALSERVER_WEB_SSLPORT}"
+
+### NGINX CONF THIS MACHINE VARIABLES - END
+
+NGINX_SITES_AVAILABLE_DIRECTORY="/etc/nginx/sites-available"
+NGINX_SITES_ENABLED_DIRECTORY="/etc/nginx/sites-enabled"
+
+if [ ! -z "${VIRTUALSERVER_PARENT}" ]; then
+    for parent_domain in $(virtualmin list-domains --no-alias --name-only --user ${VIRTUALSERVER_USER}); do
+        virtualmin modify-domain --domain $parent_domain
+    done
+    exit 0
+fi
+
+# Check if nginx template is specified on virtualserver description
+TEMPLATE=$(echo "$VIRTUALSERVER_OWNER" | grep -Po "(?<=\[nginx-template )(\w|-)+(?=\])")
+if [ ! -z "${TEMPLATE}" ]; then
+    if [ -d ${NGINX_CONF_TEMPLATE_DIR}/${TEMPLATE} ]; then
+        NGINX_CONF_TEMPLATE=${TEMPLATE}
+    fi
+fi
+
+NGINX_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/${NGINX_SSL_CONF_TEMPLATE_FILE}"
+NGINX_NON_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/${NGINX_NON_SSL_CONF_TEMPLATE_FILE}"
+
+#
+# Create the nginx conf entry upon creating or modifying a domain
+#
+if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = "MODIFY_DOMAIN" ]; then
+    ndomain_alias_string=""
+    for nalias in $(virtualmin list-domains --name-only --user ${VIRTUALSERVER_USER}); do
+      ndomain_alias_string="${ndomain_alias_string} ${nalias} www.${nalias}"
+    done;
+
+    ndomain_web_root_path=${VIRTUALSERVER_PUBLIC_HTML_PATH};
+
+    sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
+          -e 's/''@PUBLIC_NON_SSL_IP@''/'"${REPL_PUBLIC_NON_SSL_IP}"'/g' \
+          -e 's/''@PUBLIC_NON_SSL_PORT@''/'"${REPL_PUBLIC_NON_SSL_PORT}"'/g' \
+          -e 's~''@WEB_ROOT_PATH@''~'"${ndomain_web_root_path}"'~g' \
+          -e 's/''@APACHE_NON_SSL_IP@''/'"${REPL_APACHE_NON_SSL_IP}"'/g' \
+          -e 's/''@APACHE_NON_SSL_PORT@''/'"${REPL_APACHE_NON_SSL_PORT}"'/g' \
+    \
+          "${NGINX_NON_SSL_CONF_TEMPLATE}" \
+    > "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf"
+
+    # If SSL in enabled, add the SSL directive too
+    if [ $VIRTUALSERVER_SSL -eq 1 ]; then
+        ndomain_ssl_key=${VIRTUALSERVER_SSL_KEY};
+        ndomain_nginx_chained_ssl_crt=${VIRTUALSERVER_SSL_COMBINED};
+
+        sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
+              -e 's/''@PUBLIC_SSL_IP@''/'"${REPL_PUBLIC_SSL_IP}"'/g' \
+              -e 's/''@PUBLIC_SSL_PORT@''/'"${REPL_PUBLIC_SSL_PORT}"'/g' \
+              -e 's~''@WEB_ROOT_PATH@''~'"${ndomain_web_root_path}"'~g' \
+              -e 's/''@SSL_PROTOCOLS@''/'"${REPL_SSL_PROTOCOLS}"'/g' \
+              -e 's/''@SSL_CIPHERS@''/'"${REPL_SSL_CIPHERS}"'/g' \
+              -e 's~''@SSL_CERTIFICATE@''~'"${ndomain_nginx_chained_ssl_crt}"'~g' \
+              -e 's~''@SSL_CERTIFICATE_KEY@''~'"${ndomain_ssl_key}"'~g' \
+              -e 's/''@APACHE_SSL_IP@''/'"${REPL_APACHE_SSL_IP}"'/g' \
+              -e 's/''@APACHE_SSL_PORT@''/'"${REPL_APACHE_SSL_PORT}"'/g' \
+        \
+              "${NGINX_SSL_CONF_TEMPLATE}" \
+        > "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
+
+
+    fi
+
+    # Create a symlink if this is a new entry
+    if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ]; then
+        ln -s ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf
+        if [ $VIRTUALSERVER_SSL -eq 1 ]; then
+            ln -s ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
+        fi
+    fi
+fi
+
+#
+# Delete the config file and the symlink if the entry is being deleted
+#
+if [ "$VIRTUALSERVER_ACTION" = "DELETE_DOMAIN" ]; then
+    rm -f ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf
+    if [ $VIRTUALSERVER_SSL -eq 1 ]; then
+        rm -f ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
+    fi
+fi
+
+# Reload nginx
+# /etc/init.d/nginx reload
+service nginx reload
