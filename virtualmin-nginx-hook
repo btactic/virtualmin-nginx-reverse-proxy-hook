@@ -121,13 +121,23 @@ if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = 
 
     fi
 
-    # Create a symlink if this is a new entry
-    if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ]; then
+
+    # Make sure symlinks are always created in case of non-ssl
+    if [ ! -e ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf ]; then
         ln -s ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf
-        if [ $VIRTUALSERVER_SSL -eq 1 ]; then
+    fi
+
+    # Make sure symlinks are created when enabling ssl or deleted when it is disabled
+    if [ $VIRTUALSERVER_SSL -eq 1 ]; then
+        if [ ! -e ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ]; then
             ln -s ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
         fi
+    else
+        if [ -e ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ]; then
+            rm ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
+        fi
     fi
+
 fi
 
 #
