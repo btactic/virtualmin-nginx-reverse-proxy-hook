@@ -25,8 +25,6 @@
 # This script forces the modification of all domains in order to generate
 # nginx configuration for each one of them.
 
-# This script is useful combined with `generate-enabled-sites.sh` script.
-
-for ndomain in $(virtualmin list-domains --no-alias --name-only); do
+for ndomain in $(virtualmin list-domains --name-only); do
     virtualmin modify-domain --domain $ndomain
 done

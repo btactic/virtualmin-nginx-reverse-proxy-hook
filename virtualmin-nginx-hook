@@ -25,9 +25,6 @@
 #set -x
 #set -v
 
-# Note: Virtualmin subservers with its own home are not currently supported
-# Note: Only aliases are supported
-
 NGINX_CONF_TEMPLATE_DIR="/usr/local/etc/nginx-templates"
 NGINX_CONF_TEMPLATE="default"
 NGINX_SSL_CONF_TEMPLATE_FILE="plantilla-nginx-ssl.conf"
@@ -60,13 +57,6 @@ REPL_APACHE_SSL_PORT="${VIRTUALSERVER_WEB_SSLPORT}"
 NGINX_SITES_AVAILABLE_DIRECTORY="/etc/nginx/sites-available"
 NGINX_SITES_ENABLED_DIRECTORY="/etc/nginx/sites-enabled"
 
-if [ ! -z "${VIRTUALSERVER_PARENT}" ]; then
-    for parent_domain in $(virtualmin list-domains --no-alias --name-only --user ${VIRTUALSERVER_USER}); do
-        virtualmin modify-domain --domain $parent_domain
-    done
-    exit 0
-fi
-
 # Check if nginx template is specified on virtualserver description
 TEMPLATE=$(echo "$VIRTUALSERVER_OWNER" | grep -Po "(?<=\[nginx-template )(\w|-)+(?=\])")
 if [ ! -z "${TEMPLATE}" ]; then
@@ -78,16 +68,42 @@ fi
 NGINX_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/${NGINX_SSL_CONF_TEMPLATE_FILE}"
 NGINX_NON_SSL_CONF_TEMPLATE="${NGINX_CONF_TEMPLATE_DIR}/${NGINX_CONF_TEMPLATE}/${NGINX_NON_SSL_CONF_TEMPLATE_FILE}"
 
+# Check if virtual server is an alias
+if [ ! -z "${VIRTUALSERVER_PARENT}" ] && [ ${VIRTUALSERVER_ALIAS_MODE} -eq 1 ]; then
+    IS_ALIAS="YES"
+else
+    IS_ALIAS="NO"
+fi
+
+# Check if SSL is enabled
+if [ "$IS_ALIAS" = "YES" ]; then
+    if [ $PARENT_VIRTUALSERVER_SSL -eq 1 ]; then
+        IS_SSL="YES"
+    else
+        IS_SSL="NO"
+    fi
+else
+    if [ $VIRTUALSERVER_SSL -eq 1 ]; then
+        IS_SSL="YES"
+    else
+        IS_SSL="NO"
+    fi
+fi
+
 #
 # Create the nginx conf entry upon creating or modifying a domain
 #
 if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = "MODIFY_DOMAIN" ]; then
-    ndomain_alias_string=""
-    for nalias in $(virtualmin list-domains --name-only --user ${VIRTUALSERVER_USER}); do
-      ndomain_alias_string="${ndomain_alias_string} ${nalias} www.${nalias}"
-    done;
 
-    ndomain_web_root_path=${VIRTUALSERVER_PUBLIC_HTML_PATH};
+    ndomain_alias_string="${VIRTUALSERVER_DOM} www.${VIRTUALSERVER_DOM}"
+
+    # Virtual server is an alias? Then use PARENT variables
+    if [ "$IS_ALIAS" = "YES" ]; then
+        ndomain_web_root_path=${PARENT_VIRTUALSERVER_PUBLIC_HTML_PATH};
+    else
+        # Otherwise it is a parent server or a sub-server
+        ndomain_web_root_path=${VIRTUALSERVER_PUBLIC_HTML_PATH};
+    fi
 
     sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
           -e 's/''@PUBLIC_NON_SSL_IP@''/'"${REPL_PUBLIC_NON_SSL_IP}"'/g' \
@@ -100,9 +116,17 @@ if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = 
     > "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf"
 
     # If SSL in enabled, add the SSL directive too
-    if [ $VIRTUALSERVER_SSL -eq 1 ]; then
-        ndomain_ssl_key=${VIRTUALSERVER_SSL_KEY};
-        ndomain_nginx_chained_ssl_crt=${VIRTUALSERVER_SSL_COMBINED};
+    if [ "$IS_SSL" = "YES" ]; then
+
+        # Virtual server is an alias? Then use PARENT certs
+        if [ "$IS_ALIAS" = "YES" ]; then
+            ndomain_ssl_key=${PARENT_VIRTUALSERVER_SSL_KEY};
+            ndomain_nginx_chained_ssl_crt=${PARENT_VIRTUALSERVER_SSL_COMBINED};
+        else
+            # Otherwise it is a parent server or a sub-server
+            ndomain_ssl_key=${VIRTUALSERVER_SSL_KEY};
+            ndomain_nginx_chained_ssl_crt=${VIRTUALSERVER_SSL_COMBINED};
+        fi
 
         sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
               -e 's/''@PUBLIC_SSL_IP@''/'"${REPL_PUBLIC_SSL_IP}"'/g' \
@@ -128,7 +152,7 @@ if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = 
     fi
 
     # Make sure symlinks are created when enabling ssl or deleted when it is disabled
-    if [ $VIRTUALSERVER_SSL -eq 1 ]; then
+    if [ "$IS_SSL" = "YES" ]; then
         if [ ! -e ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ]; then
             ln -s ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
         fi
@@ -145,7 +169,7 @@ fi
 #
 if [ "$VIRTUALSERVER_ACTION" = "DELETE_DOMAIN" ]; then
     rm -f ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf
-    if [ $VIRTUALSERVER_SSL -eq 1 ]; then
+    if [ "$IS_SSL" = "YES" ]; then
         rm -f ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
     fi
 fi
