@@ -30,6 +30,31 @@ NGINX_CONF_TEMPLATE="default"
 NGINX_SSL_CONF_TEMPLATE_FILE="plantilla-nginx-ssl.conf"
 NGINX_NON_SSL_CONF_TEMPLATE_FILE="plantilla-nginx.conf"
 
+# Nginx logrotate
+NGINX_LOGS_FOLDER="/var/log/virtualmin/nginx"
+NGINX_LOGROTATE_CONFIG_FOLDER="/etc/logrotate.d"
+
+NGINX_LOGROTATE_TEMPLATE_DIR="/usr/local/etc/nginx-logrotate-templates"
+NGINX_LOGROTATE_TEMPLATE="default"
+NGINX_LOGROTATE_TEMPLATE_FILE_NAME="logrotate-nginx.conf"
+
+# Check if nginx logrotate template is specified on virtualserver description
+LOGROTATE_TEMPLATE=$(echo "$VIRTUALSERVER_OWNER" \
+        | grep -Po "(?<=\[nginx-logrotate-template )(\w|-)+(?=\])")
+if [ ! -z "${LOGROTATE_TEMPLATE}" ]; then
+    if [ -d ${NGINX_LOGROTATE_TEMPLATE_DIR}/${LOGROTATE_TEMPLATE} ]; then
+        NGINX_LOGROTATE_TEMPLATE=${LOGROTATE_TEMPLATE}
+    fi
+fi
+NGINX_LOGROTATE_TEMPLATE_FILE="${NGINX_LOGROTATE_TEMPLATE_DIR}\
+/${NGINX_LOGROTATE_TEMPLATE}\
+/${NGINX_LOGROTATE_TEMPLATE_FILE_NAME}"
+
+NGINX_LOGROTATE_CONFIG_FILE_NON_SSL="${NGINX_LOGROTATE_CONFIG_FOLDER}\
+/${VIRTUALSERVER_DOM}.nginx.conf"
+NGINX_LOGROTATE_CONFIG_FILE_SSL="${NGINX_LOGROTATE_CONFIG_FOLDER}\
+/${VIRTUALSERVER_DOM}.ssl.nginx.conf"
+
 ### NGINX CONF DEFAULT VARIABLES - BEGIN
 
 REPL_SSL_PROTOCOLS="TLSv1 TLSv1.1 TLSv1.2"
@@ -113,15 +138,27 @@ if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = 
         ndomain_web_root_path=${VIRTUALSERVER_PUBLIC_HTML_PATH};
     fi
 
+    # Configure nginx logs
+    NGINX_ACCESS_LOG_FILE_NON_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}_access_log"
+    NGINX_ERROR_LOG_FILE_NON_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}_error_log"
+
     sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
           -e 's/''@PUBLIC_NON_SSL_IP@''/'"${REPL_PUBLIC_NON_SSL_IP}"'/g' \
           -e 's/''@PUBLIC_NON_SSL_PORT@''/'"${REPL_PUBLIC_NON_SSL_PORT}"'/g' \
           -e 's~''@WEB_ROOT_PATH@''~'"${ndomain_web_root_path}"'~g' \
           -e 's/''@APACHE_NON_SSL_IP@''/'"${REPL_APACHE_NON_SSL_IP}"'/g' \
           -e 's/''@APACHE_NON_SSL_PORT@''/'"${REPL_APACHE_NON_SSL_PORT}"'/g' \
+          -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_NON_SSL}"'~g' \
+          -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_NON_SSL}"'~g' \
     \
           "${NGINX_NON_SSL_CONF_TEMPLATE}" \
     > "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf"
+
+    sed -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_NON_SSL}"'~g' \
+          -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_NON_SSL}"'~g' \
+    \
+          "${NGINX_LOGROTATE_TEMPLATE_FILE}" \
+    > "${NGINX_LOGROTATE_CONFIG_FILE_NON_SSL}"
 
     # If SSL in enabled, add the SSL directive too
     if [ "$IS_SSL" = "YES" ]; then
@@ -136,6 +173,10 @@ if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = 
             ndomain_nginx_chained_ssl_crt=${VIRTUALSERVER_SSL_COMBINED};
         fi
 
+        # Configure nginx logs
+        NGINX_ACCESS_LOG_FILE_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}.ssl_access_log"
+        NGINX_ERROR_LOG_FILE_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}.ssl_error_log"
+
         sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
               -e 's/''@PUBLIC_SSL_IP@''/'"${REPL_PUBLIC_SSL_IP}"'/g' \
               -e 's/''@PUBLIC_SSL_PORT@''/'"${REPL_PUBLIC_SSL_PORT}"'/g' \
@@ -146,10 +187,17 @@ if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = 
               -e 's~''@SSL_CERTIFICATE_KEY@''~'"${ndomain_ssl_key}"'~g' \
               -e 's/''@APACHE_SSL_IP@''/'"${REPL_APACHE_SSL_IP}"'/g' \
               -e 's/''@APACHE_SSL_PORT@''/'"${REPL_APACHE_SSL_PORT}"'/g' \
+              -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_SSL}"'~g' \
+              -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_SSL}"'~g' \
         \
               "${NGINX_SSL_CONF_TEMPLATE}" \
         > "${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf"
 
+        sed -e 's~''@ACCESS_LOG_FILE@''~'"${NGINX_ACCESS_LOG_FILE_SSL}"'~g' \
+              -e 's~''@ERROR_LOG_FILE@''~'"${NGINX_ERROR_LOG_FILE_SSL}"'~g' \
+        \
+              "${NGINX_LOGROTATE_TEMPLATE_FILE}" \
+        > "${NGINX_LOGROTATE_CONFIG_FILE_SSL}"
 
     fi
 
@@ -168,6 +216,9 @@ if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = 
         if [ -e ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ]; then
             rm ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
         fi
+        if [ -e ${NGINX_LOGROTATE_CONFIG_FILE_SSL} ]; then
+            rm ${NGINX_LOGROTATE_CONFIG_FILE_SSL}
+        fi
     fi
 
 fi
@@ -176,10 +227,19 @@ fi
 # Delete the config file and the symlink if the entry is being deleted
 #
 if [ "$VIRTUALSERVER_ACTION" = "DELETE_DOMAIN" ]; then
+
     rm -f ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.conf ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.conf
+    if [ -e ${NGINX_LOGROTATE_CONFIG_FILE_NON_SSL} ]; then
+        rm ${NGINX_LOGROTATE_CONFIG_FILE_NON_SSL}
+    fi
+
     if [ "$IS_SSL" = "YES" ]; then
         rm -f ${NGINX_SITES_ENABLED_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf ${NGINX_SITES_AVAILABLE_DIRECTORY}/${VIRTUALSERVER_DOM}.ssl.conf
+        if [ -e ${NGINX_LOGROTATE_CONFIG_FILE_SSL} ]; then
+            rm ${NGINX_LOGROTATE_CONFIG_FILE_SSL}
+        fi
     fi
+
 fi
 
 # Reload nginx
