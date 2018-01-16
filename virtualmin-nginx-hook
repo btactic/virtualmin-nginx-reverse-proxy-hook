@@ -123,6 +123,10 @@ else
     fi
 fi
 
+# Configure nginx logs
+NGINX_ACCESS_LOG_FILE_NON_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}_access_log"
+NGINX_ERROR_LOG_FILE_NON_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}_error_log"
+
 #
 # Create the nginx conf entry upon creating or modifying a domain
 #
@@ -137,10 +141,6 @@ if [ "$VIRTUALSERVER_ACTION" = "CREATE_DOMAIN" ] || [ "$VIRTUALSERVER_ACTION" = 
         # Otherwise it is a parent server or a sub-server
         ndomain_web_root_path=${VIRTUALSERVER_PUBLIC_HTML_PATH};
     fi
-
-    # Configure nginx logs
-    NGINX_ACCESS_LOG_FILE_NON_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}_access_log"
-    NGINX_ERROR_LOG_FILE_NON_SSL="${NGINX_LOGS_FOLDER}/${VIRTUALSERVER_DOM}_error_log"
 
     sed -e 's/''@SERVER_NAME@''/'"${ndomain_alias_string}"'/g' \
           -e 's/''@PUBLIC_NON_SSL_IP@''/'"${REPL_PUBLIC_NON_SSL_IP}"'/g' \
