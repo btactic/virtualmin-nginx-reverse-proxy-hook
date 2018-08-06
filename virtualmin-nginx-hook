@@ -244,4 +244,4 @@ fi
 
 # Reload nginx
 # /etc/init.d/nginx reload
-service nginx reload
+service nginx reload && service nginx restart
